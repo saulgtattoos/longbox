@@ -305,15 +305,15 @@ export default function AddComic() {
             role: 'user',
             content: `You are a comic book expert. A barcode was scanned from a comic book or graphic novel. Barcode: ${barcode}. ${bookContext ? bookContext : `No Google Books match. Use your knowledge of comic UPC structures to identify it. Common prefixes: Marvel = 759606, DC = 761941, Image = 70985, Dark Horse = 761568, IDW = 827714.`}
 
-Return ONLY a JSON object with these fields: title, issue, publisher, year, condition, variant (true/false), purchasePrice, estimatedValue, notes.
+Return ONLY raw JSON. No explanation, no preamble, no markdown, no backticks. Start your response with { and end with }.
 
-Rules:
-- title: full series name (e.g. "Teenage Mutant Ninja Turtles: The Last Ronin")
-- issue: issue number or leave empty for trade paperbacks and hardcovers
-- condition: always "9.2" as default
-- purchasePrice: always empty string  
-- estimatedValue: current market value estimate, number only no dollar sign
-- notes: key issues, first appearances, collected editions info, or significance
+Fields: title, issue, publisher, year, condition, variant (true/false), purchasePrice, estimatedValue, notes.
+- title: full series name
+- issue: issue number, or empty string for trades and hardcovers
+- condition: "9.2"
+- purchasePrice: ""
+- estimatedValue: number only, no dollar sign
+- notes: first appearances, collected editions, significance
 - variant: false unless clearly a variant`
           }]
         })
@@ -321,8 +321,9 @@ Rules:
 
       const data = await response.json()
       const text = data.content[0].text
-      const clean = text.replace(/```json|```/g, '').trim()
-      const parsed = JSON.parse(clean)
+      const jsonMatch = text.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) throw new Error('No JSON in response')
+      const parsed = JSON.parse(jsonMatch[0])
       setForm(prev => ({ ...prev, ...parsed }))
       setScanStatus('FIELDS FILLED')
       setTimeout(() => setTab('manual'), 800)
@@ -547,6 +548,28 @@ Rules:
                 placeholder="759606058076"
                 inputMode="numeric"
               />
+              <button
+                onClick={() => {
+                  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                    alert('Voice input not supported. Try Chrome.')
+                    return
+                  }
+                  const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+                  const r = new SR()
+                  r.continuous = false
+                  r.interimResults = false
+                  r.lang = 'en-US'
+                  r.onresult = (e) => setScannedBarcode(e.results[0][0].transcript.replace(/\s/g, ''))
+                  r.start()
+                }}
+                style={{
+                  background: 'var(--surface2)', color: 'var(--gold)',
+                  border: '1px solid var(--gold)', borderRadius: '6px',
+                  padding: '0 0.75rem', fontSize: '1.1rem', cursor: 'pointer',
+                }}
+              >
+                🎙
+              </button>
               <button
                 onClick={handleManualBarcode}
                 disabled={loading || !scannedBarcode.trim()}
