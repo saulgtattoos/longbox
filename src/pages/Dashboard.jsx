@@ -1,21 +1,30 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AppShell from '../components/layout/AppShell'
+import { supabase } from '../services/supabaseClient'
 
 export default function Dashboard() {
   const [comics, setComics] = useState([])
   const navigate = useNavigate()
 
   useEffect(() => {
-    const stored = JSON.parse(localStorage.getItem('longbox_comics') || '[]')
-    setComics(stored)
+    async function load() {
+      const { data, error } = await supabase.from('comics').select('*')
+      if (error) console.error('Dashboard load error:', error)
+      else setComics(data.map(c => ({
+        ...c,
+        purchasePrice: c.purchase_price,
+        estimatedValue: c.estimated_value,
+      })))
+    }
+    load()
   }, [])
 
   const totalValue = comics.reduce((sum, c) => sum + (parseFloat(c.estimatedValue) || 0), 0)
   const totalPaid = comics.reduce((sum, c) => sum + (parseFloat(c.purchasePrice) || 0), 0)
   const gain = totalValue - totalPaid
   const publishers = [...new Set(comics.map(c => c.publisher).filter(Boolean))]
-  const topComic = comics.sort((a, b) => (parseFloat(b.estimatedValue) || 0) - (parseFloat(a.estimatedValue) || 0))[0]
+  const topComic = [...comics].sort((a, b) => (parseFloat(b.estimatedValue) || 0) - (parseFloat(a.estimatedValue) || 0))[0]
 
   const statCard = (label, value, color) => (
     <div style={{

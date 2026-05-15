@@ -1,14 +1,33 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import AppShell from '../components/layout/AppShell'
+import { supabase } from '../services/supabaseClient'
 
 export default function Inventory() {
   const [comics, setComics] = useState([])
   const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState(null)
+  const navigate = useNavigate()
 
   useEffect(() => {
-    const stored = JSON.parse(localStorage.getItem('longbox_comics') || '[]')
-    setComics(stored)
+    load()
   }, [])
+
+  async function load() {
+    const { data, error } = await supabase.from('comics').select('*').order('id', { ascending: false })
+    if (error) console.error('Load error:', error)
+    else setComics(data.map(c => ({
+      ...c,
+      purchasePrice: c.purchase_price,
+      estimatedValue: c.estimated_value,
+    })))
+  }
+
+  async function deleteComic(id) {
+    await supabase.from('comics').delete().eq('id', id)
+    setComics(prev => prev.filter(c => c.id !== id))
+    setSelected(null)
+  }
 
   const filtered = comics.filter(c =>
     c.title?.toLowerCase().includes(search.toLowerCase()) ||
@@ -31,7 +50,6 @@ export default function Inventory() {
     <AppShell>
       <div style={{ padding: '1.5rem' }}>
 
-        {/* Header */}
         <div style={{ marginBottom: '1.5rem' }}>
           <h2 style={{
             fontFamily: 'Syne, sans-serif',
@@ -52,7 +70,6 @@ export default function Inventory() {
           </p>
         </div>
 
-        {/* Stats Row */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
@@ -83,7 +100,6 @@ export default function Inventory() {
           </div>
         </div>
 
-        {/* Search */}
         <input
           type="text"
           placeholder="Search by title, publisher, issue..."
@@ -103,7 +119,6 @@ export default function Inventory() {
           }}
         />
 
-        {/* Empty State */}
         {comics.length === 0 && (
           <div style={{ textAlign: 'center', padding: '4rem 2rem' }}>
             <p style={{ fontSize: '3rem', marginBottom: '1rem' }}>📦</p>
@@ -116,78 +131,128 @@ export default function Inventory() {
           </div>
         )}
 
-        {/* Comic Grid */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {filtered.map(comic => (
             <div
               key={comic.id}
+              onClick={() => setSelected(selected?.id === comic.id ? null : comic)}
               style={{
-                background: 'var(--surface)',
-                border: '1px solid #2a2a27',
+                background: selected?.id === comic.id ? 'var(--surface2)' : 'var(--surface)',
+                border: `1px solid ${selected?.id === comic.id ? 'var(--gold)' : '#2a2a27'}`,
                 borderRadius: '8px',
                 padding: '1rem',
-                display: 'grid',
-                gridTemplateColumns: '1fr auto',
-                gap: '0.5rem',
-                alignItems: 'start',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
               }}
             >
-              <div>
-                <p style={{
-                  fontFamily: 'Syne, sans-serif',
-                  fontWeight: 700,
-                  fontSize: '0.95rem',
-                  color: 'var(--text)',
-                  marginBottom: '0.25rem',
-                }}>
-                  {comic.title} {comic.issue && `#${comic.issue}`}
-                </p>
-                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                  {comic.publisher && (
-                    <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)' }}>
-                      {comic.publisher}
-                    </span>
-                  )}
-                  {comic.year && (
-                    <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)' }}>
-                      {comic.year}
-                    </span>
-                  )}
-                  {comic.variant && (
-                    <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--gold)' }}>
-                      VARIANT
-                    </span>
-                  )}
-                </div>
-                {comic.notes && (
-                  <p style={{ fontFamily: 'Inter, sans-serif', fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.4rem' }}>
-                    {comic.notes}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.5rem', alignItems: 'start' }}>
+                <div>
+                  <p style={{
+                    fontFamily: 'Syne, sans-serif',
+                    fontWeight: 700,
+                    fontSize: '0.95rem',
+                    color: 'var(--text)',
+                    marginBottom: '0.25rem',
+                  }}>
+                    {comic.title} {comic.issue && `#${comic.issue}`}
                   </p>
-                )}
-              </div>
-
-              <div style={{ textAlign: 'right' }}>
-                <div style={{
-                  fontFamily: 'JetBrains Mono, monospace',
-                  fontSize: '0.75rem',
-                  fontWeight: 700,
-                  color: conditionColor(comic.condition),
-                  marginBottom: '0.35rem',
-                }}>
-                  {comic.condition}
+                  <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    {comic.publisher && (
+                      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)' }}>
+                        {comic.publisher}
+                      </span>
+                    )}
+                    {comic.year && (
+                      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)' }}>
+                        {comic.year}
+                      </span>
+                    )}
+                    {comic.variant && (
+                      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--gold)' }}>
+                        VARIANT
+                      </span>
+                    )}
+                  </div>
+                  {comic.notes && (
+                    <p style={{ fontFamily: 'Inter, sans-serif', fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.4rem' }}>
+                      {comic.notes}
+                    </p>
+                  )}
                 </div>
-                {comic.estimatedValue && (
-                  <div style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.9rem', color: 'var(--success)' }}>
-                    ${comic.estimatedValue}
+
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    color: conditionColor(comic.condition),
+                    marginBottom: '0.35rem',
+                  }}>
+                    {comic.condition}
                   </div>
-                )}
-                {comic.purchasePrice && (
-                  <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)' }}>
-                    paid ${comic.purchasePrice}
-                  </div>
-                )}
+                  {comic.estimatedValue && (
+                    <div style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.9rem', color: 'var(--success)' }}>
+                      ${comic.estimatedValue}
+                    </div>
+                  )}
+                  {comic.purchasePrice && (
+                    <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)' }}>
+                      paid ${comic.purchasePrice}
+                    </div>
+                  )}
+                </div>
               </div>
 
+              {selected?.id === comic.id && (
+                <div style={{
+                  display: 'flex',
+                  gap: '0.75rem',
+                  marginTop: '1rem',
+                  paddingTop: '1rem',
+                  borderTop: '1px solid #333',
+                }}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      navigate('/add', { state: { comic } })
+                    }}
+                    style={{
+                      flex: 1,
+                      background: 'var(--gold)',
+                      color: 'var(--ink)',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '0.6rem',
+                      fontFamily: 'Syne, sans-serif',
+                      fontWeight: 700,
+                      fontSize: '0.8rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    EDIT
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (confirm('Delete this comic?')) deleteComic(comic.id)
+                    }}
+                    style={{
+                      flex: 1,
+                      background: 'var(--red)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '0.6rem',
+                      fontFamily: 'Syne, sans-serif',
+                      fontWeight: 700,
+                      fontSize: '0.8rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    DELETE
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

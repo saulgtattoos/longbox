@@ -1,5 +1,7 @@
 import { useState, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import AppShell from '../components/layout/AppShell'
+import { supabase } from '../services/supabaseClient'
 
 const emptyForm = {
   title: '',
@@ -44,8 +46,23 @@ const conditionLabels = {
 const conditionValues = Object.keys(conditionLabels).reverse()
 
 export default function AddComic() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const editComic = location.state?.comic || null
+  const isEditing = !!editComic
+
   const [tab, setTab] = useState('manual')
-  const [form, setForm] = useState(emptyForm)
+  const [form, setForm] = useState(editComic ? {
+    title: editComic.title || '',
+    issue: editComic.issue || '',
+    publisher: editComic.publisher || '',
+    year: editComic.year || '',
+    condition: editComic.condition || '9.2',
+    variant: editComic.variant || false,
+    purchasePrice: editComic.purchasePrice || editComic.purchase_price || '',
+    estimatedValue: editComic.estimatedValue || editComic.estimated_value || '',
+    notes: editComic.notes || '',
+  } : emptyForm)
   const [aiInput, setAiInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -59,6 +76,37 @@ export default function AddComic() {
 
   function handleChange(field, value) {
     setForm(prev => ({ ...prev, [field]: value }))
+  }
+
+  async function handleSave() {
+    const record = {
+      id: isEditing ? editComic.id : Date.now(),
+      title: form.title,
+      issue: form.issue,
+      publisher: form.publisher,
+      year: form.year,
+      condition: form.condition,
+      variant: form.variant,
+      purchase_price: form.purchasePrice,
+      estimated_value: form.estimatedValue,
+      notes: form.notes,
+    }
+
+    if (isEditing) {
+      await supabase.from('comics').update(record).eq('id', editComic.id)
+    } else {
+      await supabase.from('comics').insert(record)
+    }
+
+    setSaved(true)
+    setForm(emptyForm)
+    setImagePreview(null)
+    setImageBase64(null)
+    setImageFile(null)
+    setTimeout(() => {
+      setSaved(false)
+      if (isEditing) navigate('/inventory')
+    }, 1500)
   }
 
   async function handleAiAssist() {
@@ -127,49 +175,6 @@ export default function AddComic() {
     }
   }
 
-  function startListening() {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      alert('Voice input is not supported in this browser. Try Chrome.')
-      return
-    }
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    const recognition = new SpeechRecognition()
-    recognitionRef.current = recognition
-    recognition.continuous = false
-    recognition.interimResults = false
-    recognition.lang = 'en-US'
-    recognition.onstart = () => setListening(true)
-    recognition.onresult = (e) => {
-      const transcript = e.results[0][0].transcript
-      setVoiceStatus('HEARD: ' + transcript)
-      processVoiceWithClaude(transcript)
-    }
-    recognition.onend = () => setListening(false)
-    recognition.onerror = () => {
-      setListening(false)
-      setVoiceStatus('')
-    }
-    recognition.start()
-  }
-
-  function stopListening() {
-    recognitionRef.current?.stop()
-    setListening(false)
-  }
-
-  function handleImageUpload(e) {
-    const file = e.target.files[0]
-    if (!file) return
-    setImageFile(file)
-    const reader = new FileReader()
-    reader.onload = () => {
-      const base64 = reader.result.split(',')[1]
-      setImageBase64(base64)
-      setImagePreview(reader.result)
-    }
-    reader.readAsDataURL(file)
-  }
-
   async function handleImageAssist() {
     if (!imageBase64) return
     setLoading(true)
@@ -217,16 +222,47 @@ export default function AddComic() {
     setLoading(false)
   }
 
-  function handleSave() {
-    const existing = JSON.parse(localStorage.getItem('longbox_comics') || '[]')
-    const newComic = { ...form, id: Date.now() }
-    localStorage.setItem('longbox_comics', JSON.stringify([...existing, newComic]))
-    setSaved(true)
-    setForm(emptyForm)
-    setImagePreview(null)
-    setImageBase64(null)
-    setImageFile(null)
-    setTimeout(() => setSaved(false), 3000)
+  function startListening() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      alert('Voice input is not supported in this browser. Try Chrome.')
+      return
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    const recognition = new SpeechRecognition()
+    recognitionRef.current = recognition
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.lang = 'en-US'
+    recognition.onstart = () => setListening(true)
+    recognition.onresult = (e) => {
+      const transcript = e.results[0][0].transcript
+      setVoiceStatus('HEARD: ' + transcript)
+      processVoiceWithClaude(transcript)
+    }
+    recognition.onend = () => setListening(false)
+    recognition.onerror = () => {
+      setListening(false)
+      setVoiceStatus('')
+    }
+    recognition.start()
+  }
+
+  function stopListening() {
+    recognitionRef.current?.stop()
+    setListening(false)
+  }
+
+  function handleImageUpload(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setImageFile(file)
+    const reader = new FileReader()
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1]
+      setImageBase64(base64)
+      setImagePreview(reader.result)
+    }
+    reader.readAsDataURL(file)
   }
 
   const inputStyle = {
@@ -295,39 +331,41 @@ export default function AddComic() {
           marginBottom: '1.5rem',
           letterSpacing: '0.05em',
         }}>
-          ADD COMIC
+          {isEditing ? 'EDIT COMIC' : 'ADD COMIC'}
         </h2>
 
-        <div style={{
-          display: 'flex',
-          gap: '0.5rem',
-          marginBottom: '1.5rem',
-          borderBottom: '1px solid #333',
-          paddingBottom: '0.75rem',
-        }}>
-          {['manual', 'ai', 'voice'].map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              style={{
-                fontFamily: 'JetBrains Mono, monospace',
-                fontSize: '0.7rem',
-                letterSpacing: '0.1em',
-                padding: '0.4rem 1rem',
-                borderRadius: '4px',
-                border: 'none',
-                cursor: 'pointer',
-                background: tab === t ? 'var(--gold)' : 'var(--surface2)',
-                color: tab === t ? 'var(--ink)' : 'var(--muted)',
-                fontWeight: tab === t ? 700 : 400,
-              }}
-            >
-              {t === 'manual' ? 'MANUAL' : t === 'ai' ? 'AI ASSIST' : '🎙 VOICE'}
-            </button>
-          ))}
-        </div>
+        {!isEditing && (
+          <div style={{
+            display: 'flex',
+            gap: '0.5rem',
+            marginBottom: '1.5rem',
+            borderBottom: '1px solid #333',
+            paddingBottom: '0.75rem',
+          }}>
+            {['manual', 'ai', 'voice'].map(t => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                style={{
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: '0.7rem',
+                  letterSpacing: '0.1em',
+                  padding: '0.4rem 1rem',
+                  borderRadius: '4px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: tab === t ? 'var(--gold)' : 'var(--surface2)',
+                  color: tab === t ? 'var(--ink)' : 'var(--muted)',
+                  fontWeight: tab === t ? 700 : 400,
+                }}
+              >
+                {t === 'manual' ? 'MANUAL' : t === 'ai' ? 'AI ASSIST' : '🎙 VOICE'}
+              </button>
+            ))}
+          </div>
+        )}
 
-        {tab === 'voice' && (
+        {tab === 'voice' && !isEditing && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem', padding: '2rem 0' }}>
             <p style={{ color: 'var(--muted)', fontSize: '0.85rem', lineHeight: 1.6, textAlign: 'center' }}>
               Tap the mic and describe the comic. Claude will fill in all the fields automatically.
@@ -393,7 +431,7 @@ export default function AddComic() {
           </div>
         )}
 
-        {tab === 'ai' && (
+        {tab === 'ai' && !isEditing && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             {imagePreview && (
               <div style={{ position: 'relative' }}>
@@ -476,9 +514,6 @@ export default function AddComic() {
               <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)' }}>OR DESCRIBE IT</span>
               <div style={{ flex: 1, height: '1px', background: '#333' }} />
             </div>
-            <p style={{ color: 'var(--muted)', fontSize: '0.85rem', lineHeight: 1.6 }}>
-              Paste any text about a comic. A listing, a description, a note. Claude will extract the details and fill the form.
-            </p>
             <textarea
               value={aiInput}
               onChange={e => setAiInput(e.target.value)}
@@ -508,12 +543,12 @@ export default function AddComic() {
           </div>
         )}
 
-        {tab === 'manual' && (
+        {(tab === 'manual' || isEditing) && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
 
-            <MicButton />
+            {!isEditing && <MicButton />}
 
-            <div style={{ height: '1px', background: '#2a2a27' }} />
+            {!isEditing && <div style={{ height: '1px', background: '#2a2a27' }} />}
 
             <div>
               <label style={labelStyle}>TITLE</label>
@@ -611,7 +646,7 @@ export default function AddComic() {
                 transition: 'background 0.3s',
               }}
             >
-              {saved ? 'SAVED TO COLLECTION' : 'SAVE TO COLLECTION'}
+              {saved ? 'SAVED' : isEditing ? 'UPDATE COMIC' : 'SAVE TO COLLECTION'}
             </button>
 
           </div>

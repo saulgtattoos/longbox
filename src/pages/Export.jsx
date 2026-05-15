@@ -1,15 +1,25 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import AppShell from '../components/layout/AppShell'
+import { supabase } from '../services/supabaseClient'
 
 export default function Export() {
+  const [comics, setComics] = useState([])
   const [exported, setExported] = useState(false)
 
-  function getComics() {
-    return JSON.parse(localStorage.getItem('longbox_comics') || '[]')
-  }
+  useEffect(() => {
+    async function load() {
+      const { data, error } = await supabase.from('comics').select('*')
+      if (error) console.error('Export load error:', error)
+      else setComics(data.map(c => ({
+        ...c,
+        purchasePrice: c.purchase_price,
+        estimatedValue: c.estimated_value,
+      })))
+    }
+    load()
+  }, [])
 
   function downloadCSV() {
-    const comics = getComics()
     if (comics.length === 0) {
       alert('No comics in collection yet.')
       return
@@ -43,17 +53,10 @@ export default function Export() {
     setTimeout(() => setExported(false), 3000)
   }
 
-  function getStats() {
-    const comics = getComics()
-    const total = comics.length
-    const totalValue = comics.reduce((sum, c) => sum + (parseFloat(c.estimatedValue) || 0), 0)
-    const totalPaid = comics.reduce((sum, c) => sum + (parseFloat(c.purchasePrice) || 0), 0)
-    const gain = totalValue - totalPaid
-    const publishers = [...new Set(comics.map(c => c.publisher).filter(Boolean))]
-    return { total, totalValue, totalPaid, gain, publishers }
-  }
-
-  const stats = getStats()
+  const totalValue = comics.reduce((sum, c) => sum + (parseFloat(c.estimatedValue) || 0), 0)
+  const totalPaid = comics.reduce((sum, c) => sum + (parseFloat(c.purchasePrice) || 0), 0)
+  const gain = totalValue - totalPaid
+  const publishers = [...new Set(comics.map(c => c.publisher).filter(Boolean))]
 
   return (
     <AppShell>
@@ -70,7 +73,6 @@ export default function Export() {
           EXPORT
         </h2>
 
-        {/* Collection Summary */}
         <div style={{
           background: 'var(--surface)',
           border: '1px solid #2a2a27',
@@ -91,29 +93,29 @@ export default function Export() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
             <div>
               <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>TOTAL COMICS</p>
-              <p style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '1.5rem', color: 'var(--text)' }}>{stats.total}</p>
+              <p style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '1.5rem', color: 'var(--text)' }}>{comics.length}</p>
             </div>
             <div>
               <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>TOTAL VALUE</p>
-              <p style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '1.5rem', color: 'var(--success)' }}>${stats.totalValue.toLocaleString()}</p>
+              <p style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '1.5rem', color: 'var(--success)' }}>${totalValue.toLocaleString()}</p>
             </div>
             <div>
               <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>TOTAL PAID</p>
-              <p style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '1.5rem', color: 'var(--gold)' }}>${stats.totalPaid.toLocaleString()}</p>
+              <p style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '1.5rem', color: 'var(--gold)' }}>${totalPaid.toLocaleString()}</p>
             </div>
             <div>
               <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>GAIN</p>
-              <p style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '1.5rem', color: stats.gain >= 0 ? 'var(--success)' : 'var(--red)' }}>
-                {stats.gain >= 0 ? '+' : ''}${stats.gain.toLocaleString()}
+              <p style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '1.5rem', color: gain >= 0 ? 'var(--success)' : 'var(--red)' }}>
+                {gain >= 0 ? '+' : ''}${gain.toLocaleString()}
               </p>
             </div>
           </div>
 
-          {stats.publishers.length > 0 && (
+          {publishers.length > 0 && (
             <div>
               <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)', marginBottom: '0.5rem' }}>PUBLISHERS</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-                {stats.publishers.map(pub => (
+                {publishers.map(pub => (
                   <span key={pub} style={{
                     fontFamily: 'JetBrains Mono, monospace',
                     fontSize: '0.6rem',
@@ -131,7 +133,6 @@ export default function Export() {
           )}
         </div>
 
-        {/* Download Button */}
         <button
           onClick={downloadCSV}
           style={{
