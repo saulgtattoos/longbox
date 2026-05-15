@@ -7,6 +7,7 @@ export default function Inventory() {
   const [comics, setComics] = useState([])
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -27,6 +28,7 @@ export default function Inventory() {
     await supabase.from('comics').delete().eq('id', id)
     setComics(prev => prev.filter(c => c.id !== id))
     setSelected(null)
+    setDeleteTarget(null)
   }
 
   const filtered = comics.filter(c =>
@@ -49,6 +51,92 @@ export default function Inventory() {
   return (
     <AppShell>
       <div style={{ padding: '1.5rem' }}>
+
+        {deleteTarget && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.75)',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '2rem',
+          }}>
+            <div style={{
+              background: 'var(--surface)',
+              border: '1px solid var(--red)',
+              borderRadius: '8px',
+              padding: '1.5rem',
+              maxWidth: '340px',
+              width: '100%',
+            }}>
+              <p style={{
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: '0.6rem',
+                color: 'var(--red)',
+                letterSpacing: '0.1em',
+                marginBottom: '0.75rem',
+              }}>
+                DELETE COMIC
+              </p>
+              <p style={{
+                fontFamily: 'Syne, sans-serif',
+                fontWeight: 700,
+                fontSize: '1rem',
+                color: 'var(--text)',
+                marginBottom: '0.5rem',
+              }}>
+                {deleteTarget.title} {deleteTarget.issue && `#${deleteTarget.issue}`}
+              </p>
+              <p style={{
+                fontFamily: 'Inter, sans-serif',
+                fontSize: '0.85rem',
+                color: 'var(--muted)',
+                marginBottom: '1.5rem',
+                lineHeight: 1.5,
+              }}>
+                This will permanently remove this comic from your vault. This cannot be undone.
+              </p>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  style={{
+                    flex: 1,
+                    background: 'var(--surface2)',
+                    color: 'var(--text)',
+                    border: '1px solid #333',
+                    borderRadius: '6px',
+                    padding: '0.65rem',
+                    fontFamily: 'Syne, sans-serif',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  CANCEL
+                </button>
+                <button
+                  onClick={() => deleteComic(deleteTarget.id)}
+                  style={{
+                    flex: 1,
+                    background: 'var(--red)',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '0.65rem',
+                    fontFamily: 'Syne, sans-serif',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  DELETE
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div style={{ marginBottom: '1.5rem' }}>
           <h2 style={{
@@ -234,7 +322,7 @@ export default function Inventory() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (confirm('Delete this comic?')) deleteComic(comic.id)
+                      setDeleteTarget(comic)
                     }}
                     style={{
                       flex: 1,
