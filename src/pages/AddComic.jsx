@@ -277,6 +277,19 @@ export default function AddComic() {
     setLoading(true)
 
     try {
+      // Try Google Books first (works well for trades, hardcovers, ISBN barcodes)
+      let bookContext = ''
+      try {
+        const gbRes = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${barcode}`)
+        const gbData = await gbRes.json()
+        if (gbData.totalItems > 0) {
+          const b = gbData.items[0].volumeInfo
+          bookContext = `Google Books match: Title: "${b.title}", Authors: ${b.authors?.join(', ')}, Publisher: "${b.publisher}", Published: "${b.publishedDate}", Description: "${b.description?.slice(0, 400)}"`
+        }
+      } catch (e) {
+        // Google Books failed, continue with barcode only
+      }
+
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -290,19 +303,18 @@ export default function AddComic() {
           max_tokens: 1000,
           messages: [{
             role: 'user',
-            content: `You are a comic book expert with deep knowledge of UPC barcodes printed on comic books. The UPC scanned is: ${barcode}
+            content: `You are a comic book expert. A barcode was scanned from a comic book or graphic novel. Barcode: ${barcode}. ${bookContext ? bookContext : `No Google Books match. Use your knowledge of comic UPC structures to identify it. Common prefixes: Marvel = 759606, DC = 761941, Image = 70985, Dark Horse = 761568, IDW = 827714.`}
 
-Comic book UPCs encode publisher, title, and issue. Common publisher prefixes: Marvel = 759606, DC = 761941, Image = 70985, Dark Horse = 761568. The digits after the prefix encode the title code and issue number.
-
-Identify the exact comic from this UPC and return ONLY a JSON object with these fields: title, issue, publisher, year, condition, variant (true/false), purchasePrice, estimatedValue, notes.
+Return ONLY a JSON object with these fields: title, issue, publisher, year, condition, variant (true/false), purchasePrice, estimatedValue, notes.
 
 Rules:
+- title: full series name (e.g. "Teenage Mutant Ninja Turtles: The Last Ronin")
+- issue: issue number or leave empty for trade paperbacks and hardcovers
 - condition: always "9.2" as default
-- purchasePrice: always empty string
-- estimatedValue: current market value estimate in dollars, number only, no dollar sign
-- notes: key issues, first appearances, or significance if any
-- variant: true if barcode suggests a variant edition
-- Use your best knowledge of comic UPC structures to identify the exact title and issue number`
+- purchasePrice: always empty string  
+- estimatedValue: current market value estimate, number only no dollar sign
+- notes: key issues, first appearances, collected editions info, or significance
+- variant: false unless clearly a variant`
           }]
         })
       })
