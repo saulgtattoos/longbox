@@ -78,6 +78,7 @@ export default function AddComic() {
   const [scanStatus, setScanStatus] = useState('POINT AT BARCODE')
   const [scannedBarcode, setScannedBarcode] = useState('')
   const [scanError, setScanError] = useState('')
+  const [barcodeListening, setBarcodeListening] = useState(false)
 
   const fileInputRef = useRef(null)
   const recognitionRef = useRef(null)
@@ -559,16 +560,36 @@ Fields: title, issue, publisher, year, condition, variant (true/false), purchase
                   r.continuous = false
                   r.interimResults = false
                   r.lang = 'en-US'
-                  r.onresult = (e) => setScannedBarcode(e.results[0][0].transcript.replace(/\s/g, ''))
+                  r.onstart = () => setBarcodeListening(true)
+                  r.onend = () => setBarcodeListening(false)
+                  r.onerror = () => setBarcodeListening(false)
+                  r.onresult = (e) => {
+                    setScannedBarcode(e.results[0][0].transcript.replace(/\s/g, ''))
+                    setBarcodeListening(false)
+                  }
                   r.start()
                 }}
                 style={{
-                  background: 'var(--surface2)', color: 'var(--gold)',
-                  border: '1px solid var(--gold)', borderRadius: '6px',
-                  padding: '0 0.75rem', fontSize: '1.1rem', cursor: 'pointer',
+                  position: 'relative',
+                  background: barcodeListening ? 'var(--red)' : 'var(--surface2)',
+                  color: barcodeListening ? 'white' : 'var(--gold)',
+                  border: `1px solid ${barcodeListening ? 'var(--red)' : 'var(--gold)'}`,
+                  borderRadius: '6px',
+                  padding: '0 0.75rem',
+                  fontSize: '1.1rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  boxShadow: barcodeListening ? '0 0 0 4px rgba(192,57,43,0.25)' : 'none',
+                  animation: barcodeListening ? 'micPulse 1s ease-in-out infinite' : 'none',
                 }}
               >
-                🎙
+                {barcodeListening ? '⏹' : '🎙'}
+                <style>{`
+                  @keyframes micPulse {
+                    0%, 100% { box-shadow: 0 0 0 2px rgba(192,57,43,0.4); }
+                    50% { box-shadow: 0 0 0 8px rgba(192,57,43,0.1); }
+                  }
+                `}</style>
               </button>
               <button
                 onClick={handleManualBarcode}
