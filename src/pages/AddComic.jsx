@@ -238,24 +238,21 @@ export default function AddComic() {
       const codeReader = new BrowserMultiFormatReader()
       codeReaderRef.current = codeReader
 
-      const devices = await BrowserMultiFormatReader.listVideoInputDevices()
-      const backCamera = devices.find(d =>
-        d.label.toLowerCase().includes('back') ||
-        d.label.toLowerCase().includes('rear') ||
-        d.label.toLowerCase().includes('environment')
-      ) || devices[devices.length - 1] || devices[0]
-
-      const deviceId = backCamera?.deviceId || undefined
       setScanStatus('POINT AT BARCODE')
 
-      await codeReader.decodeFromVideoDevice(deviceId, videoRef.current, (result, err) => {
-        if (result) {
-          handleBarcodeDetected(result.getText())
+      // Use environment-facing camera via constraints, no device enumeration needed
+      await codeReader.decodeFromConstraints(
+        { video: { facingMode: 'environment' } },
+        videoRef.current,
+        (result, err) => {
+          if (result) {
+            handleBarcodeDetected(result.getText())
+          }
+          if (err && !(err instanceof NotFoundException)) {
+            console.error('ZXing error:', err)
+          }
         }
-        if (err && !(err instanceof NotFoundException)) {
-          console.error('ZXing error:', err)
-        }
-      })
+      )
     } catch (err) {
       console.error('Camera start error:', err)
       setScanError('Camera access denied. Allow camera and try again.')
