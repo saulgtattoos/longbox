@@ -277,15 +277,6 @@ export default function AddComic() {
     setLoading(true)
 
     try {
-      const gbRes = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${barcode}`)
-      const gbData = await gbRes.json()
-      let bookInfo = null
-      if (gbData.totalItems > 0) bookInfo = gbData.items[0].volumeInfo
-
-      const contextText = bookInfo
-        ? `Barcode: ${barcode}. Google Books result: Title: "${bookInfo.title}", Authors: ${bookInfo.authors?.join(', ')}, Publisher: "${bookInfo.publisher}", Published: "${bookInfo.publishedDate}", Description: "${bookInfo.description?.slice(0, 300)}"`
-        : `Barcode/UPC: ${barcode}. No Google Books result found. This is likely a comic book UPC.`
-
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -299,7 +290,19 @@ export default function AddComic() {
           max_tokens: 1000,
           messages: [{
             role: 'user',
-            content: `You are a comic book expert. Based on this barcode scan data, fill in comic book details and return ONLY a JSON object with these exact fields: title, issue, publisher, year, condition, variant (true/false), purchasePrice, estimatedValue, notes. Leave condition as "9.2" as default. Leave purchasePrice as empty string. For estimatedValue, use your knowledge of this comic's typical market value. For notes, mention any key issues or first appearances. ${contextText}`
+            content: `You are a comic book expert with deep knowledge of UPC barcodes printed on comic books. The UPC scanned is: ${barcode}
+
+Comic book UPCs encode publisher, title, and issue. Common publisher prefixes: Marvel = 759606, DC = 761941, Image = 70985, Dark Horse = 761568. The digits after the prefix encode the title code and issue number.
+
+Identify the exact comic from this UPC and return ONLY a JSON object with these fields: title, issue, publisher, year, condition, variant (true/false), purchasePrice, estimatedValue, notes.
+
+Rules:
+- condition: always "9.2" as default
+- purchasePrice: always empty string
+- estimatedValue: current market value estimate in dollars, number only, no dollar sign
+- notes: key issues, first appearances, or significance if any
+- variant: true if barcode suggests a variant edition
+- Use your best knowledge of comic UPC structures to identify the exact title and issue number`
           }]
         })
       })
@@ -456,7 +459,30 @@ export default function AddComic() {
 
               {scannerActive && (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-                  <div style={{ width: '65%', height: '28%', border: '2px solid var(--gold)', borderRadius: '4px', boxShadow: '0 0 0 2000px rgba(0,0,0,0.4)' }} />
+                  <div style={{ position: 'relative', width: '65%', height: '28%', border: '2px solid var(--gold)', borderRadius: '4px', boxShadow: '0 0 0 2000px rgba(0,0,0,0.4)', overflow: 'hidden' }}>
+                    {/* Animated scan line */}
+                    <div style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      height: '2px',
+                      background: 'linear-gradient(90deg, transparent, var(--gold), transparent)',
+                      boxShadow: '0 0 8px var(--gold)',
+                      animation: 'scanline 1.4s ease-in-out infinite',
+                    }} />
+                    <style>{`
+                      @keyframes scanline {
+                        0% { top: 0%; }
+                        50% { top: calc(100% - 2px); }
+                        100% { top: 0%; }
+                      }
+                    `}</style>
+                    {/* Corner accents */}
+                    <div style={{ position: 'absolute', top: -2, left: -2, width: 12, height: 12, borderTop: '3px solid var(--gold)', borderLeft: '3px solid var(--gold)' }} />
+                    <div style={{ position: 'absolute', top: -2, right: -2, width: 12, height: 12, borderTop: '3px solid var(--gold)', borderRight: '3px solid var(--gold)' }} />
+                    <div style={{ position: 'absolute', bottom: -2, left: -2, width: 12, height: 12, borderBottom: '3px solid var(--gold)', borderLeft: '3px solid var(--gold)' }} />
+                    <div style={{ position: 'absolute', bottom: -2, right: -2, width: 12, height: 12, borderBottom: '3px solid var(--gold)', borderRight: '3px solid var(--gold)' }} />
+                  </div>
                 </div>
               )}
 
