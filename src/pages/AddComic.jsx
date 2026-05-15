@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import AppShell from '../components/layout/AppShell'
 import { supabase } from '../services/supabaseClient'
@@ -71,8 +71,30 @@ export default function AddComic() {
   const [imageFile, setImageFile] = useState(null)
   const [listening, setListening] = useState(false)
   const [voiceStatus, setVoiceStatus] = useState('')
+
+  // Barcode scanner state
+  const [scannerActive, setScannerActive] = useState(false)
+  const [scanStatus, setScanStatus] = useState('POINT AT BARCODE')
+  const [scannedBarcode, setScannedBarcode] = useState('')
+  const [scanError, setScanError] = useState('')
+
   const fileInputRef = useRef(null)
   const recognitionRef = useRef(null)
+  const videoRef = useRef(null)
+  const canvasRef = useRef(null)
+  const scanIntervalRef = useRef(null)
+  const streamRef = useRef(null)
+
+  // Clean up scanner on unmount or tab change
+  useEffect(() => {
+    if (tab !== 'scan') {
+      stopScanner()
+    }
+  }, [tab])
+
+  useEffect(() => {
+    return () => stopScanner()
+  }, [])
 
   function handleChange(field, value) {
     setForm(prev => ({ ...prev, [field]: value }))
@@ -222,6 +244,141 @@ export default function AddComic() {
     setLoading(false)
   }
 
+  // ── BARCODE SCANNER ──────────────────────────────────────────
+
+  async function startScanner() {
+    setScanError('')
+    setScanStatus('STARTING CAMERA...')
+    setScannerActive(true)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+      })
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.play()
+        setScanStatus('POINT AT BARCODE')
+        startDecoding()
+      }
+    } catch (err) {
+      console.error('Camera error:', err)
+      setScanError('Camera access denied. Allow camera and try again.')
+      setScannerActive(false)
+      setScanStatus('POINT AT BARCODE')
+    }
+  }
+
+  function stopScanner() {
+    if (scanIntervalRef.current) {
+      clearInterval(scanIntervalRef.current)
+      scanIntervalRef.current = null
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+    }
+    setScannerActive(false)
+  }
+
+  function startDecoding() {
+    // Use BarcodeDetector API if available (Chrome on Android/desktop)
+    if ('BarcodeDetector' in window) {
+      const detector = new window.BarcodeDetector({
+        formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code']
+      })
+      scanIntervalRef.current = setInterval(async () => {
+        if (!videoRef.current || videoRef.current.readyState < 2) return
+        try {
+          const barcodes = await detector.detect(videoRef.current)
+          if (barcodes.length > 0) {
+            const code = barcodes[0].rawValue
+            clearInterval(scanIntervalRef.current)
+            handleBarcodeDetected(code)
+          }
+        } catch (e) {
+          // continue scanning
+        }
+      }, 300)
+    } else {
+      // Fallback: canvas snapshot approach for Safari
+      scanIntervalRef.current = setInterval(() => {
+        if (!videoRef.current || !canvasRef.current || videoRef.current.readyState < 2) return
+        const canvas = canvasRef.current
+        const ctx = canvas.getContext('2d')
+        canvas.width = videoRef.current.videoWidth
+        canvas.height = videoRef.current.videoHeight
+        ctx.drawImage(videoRef.current, 0, 0)
+        // Without a JS barcode lib loaded, show manual entry fallback
+        setScanStatus('AUTO SCAN UNAVAILABLE')
+        setScanError('Use the manual barcode field below.')
+        clearInterval(scanIntervalRef.current)
+      }, 1000)
+    }
+  }
+
+  async function handleBarcodeDetected(barcode) {
+    stopScanner()
+    setScannedBarcode(barcode)
+    setScanStatus('BARCODE FOUND')
+    setLoading(true)
+    setScanError('')
+
+    try {
+      // 1. Try Google Books with the barcode as ISBN
+      const gbRes = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${barcode}`)
+      const gbData = await gbRes.json()
+
+      let bookInfo = null
+      if (gbData.totalItems > 0) {
+        bookInfo = gbData.items[0].volumeInfo
+      }
+
+      // 2. Send to Claude to interpret and fill comic fields
+      const contextText = bookInfo
+        ? `Barcode: ${barcode}. Google Books result: Title: "${bookInfo.title}", Authors: ${bookInfo.authors?.join(', ')}, Publisher: "${bookInfo.publisher}", Published: "${bookInfo.publishedDate}", Description: "${bookInfo.description?.slice(0, 300)}"`
+        : `Barcode/UPC: ${barcode}. No Google Books result found. This is likely a comic book UPC.`
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [{
+            role: 'user',
+            content: `You are a comic book expert. Based on this barcode scan data, fill in comic book details and return ONLY a JSON object with these exact fields: title, issue, publisher, year, condition, variant (true/false), purchasePrice, estimatedValue, notes. Leave condition as "9.2" as default since we cannot assess it from a barcode. Leave purchasePrice as empty string. For estimatedValue, use your knowledge of this comic's typical market value. For notes, mention any key issues or first appearances. ${contextText}`
+          }]
+        })
+      })
+
+      const data = await response.json()
+      const text = data.content[0].text
+      const clean = text.replace(/```json|```/g, '').trim()
+      const parsed = JSON.parse(clean)
+      setForm(prev => ({ ...prev, ...parsed }))
+      setScanStatus('FIELDS FILLED')
+      setTimeout(() => setTab('manual'), 800)
+    } catch (err) {
+      console.error('Barcode lookup error:', err)
+      setScanError('Lookup failed. Fields partially filled.')
+      setScanStatus('TRY AGAIN')
+    }
+    setLoading(false)
+  }
+
+  async function handleManualBarcode(barcode) {
+    if (!barcode.trim()) return
+    setLoading(true)
+    setScanStatus('LOOKING UP...')
+    await handleBarcodeDetected(barcode.trim())
+  }
+
   function startListening() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       alert('Voice input is not supported in this browser. Try Chrome.')
@@ -319,6 +476,8 @@ export default function AddComic() {
     </div>
   )
 
+  const tabs = ['manual', 'scan', 'ai', 'voice']
+
   return (
     <AppShell>
       <div style={{ padding: '1.5rem', maxWidth: '600px', margin: '0 auto' }}>
@@ -341,8 +500,9 @@ export default function AddComic() {
             marginBottom: '1.5rem',
             borderBottom: '1px solid #333',
             paddingBottom: '0.75rem',
+            flexWrap: 'wrap',
           }}>
-            {['manual', 'ai', 'voice'].map(t => (
+            {tabs.map(t => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -359,12 +519,174 @@ export default function AddComic() {
                   fontWeight: tab === t ? 700 : 400,
                 }}
               >
-                {t === 'manual' ? 'MANUAL' : t === 'ai' ? 'AI ASSIST' : '🎙 VOICE'}
+                {t === 'manual' ? 'MANUAL' : t === 'scan' ? '▦ SCAN' : t === 'ai' ? 'AI ASSIST' : '🎙 VOICE'}
               </button>
             ))}
           </div>
         )}
 
+        {/* ── SCAN TAB ── */}
+        {tab === 'scan' && !isEditing && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+            <p style={{ color: 'var(--muted)', fontSize: '0.85rem', lineHeight: 1.6 }}>
+              Point your camera at the barcode on the back of the comic. Claude will look it up and fill the fields.
+            </p>
+
+            {/* Viewfinder */}
+            <div style={{
+              position: 'relative',
+              width: '100%',
+              aspectRatio: '4/3',
+              background: '#000',
+              borderRadius: '8px',
+              overflow: 'hidden',
+              border: `2px solid ${scannerActive ? 'var(--gold)' : '#333'}`,
+            }}>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  display: scannerActive ? 'block' : 'none',
+                }}
+              />
+              <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+              {/* Aim reticle */}
+              {scannerActive && (
+                <div style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  pointerEvents: 'none',
+                }}>
+                  <div style={{
+                    width: '60%',
+                    height: '30%',
+                    border: '2px solid var(--gold)',
+                    borderRadius: '4px',
+                    boxShadow: '0 0 0 2000px rgba(0,0,0,0.35)',
+                  }} />
+                </div>
+              )}
+
+              {/* Idle state */}
+              {!scannerActive && (
+                <div style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.75rem',
+                }}>
+                  <span style={{ fontSize: '3rem' }}>▦</span>
+                  <p style={{
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '0.65rem',
+                    color: 'var(--muted)',
+                    letterSpacing: '0.1em',
+                  }}>
+                    CAMERA OFF
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Status */}
+            <p style={{
+              fontFamily: 'JetBrains Mono, monospace',
+              fontSize: '0.65rem',
+              letterSpacing: '0.1em',
+              color: loading ? 'var(--gold)' : scanStatus === 'FIELDS FILLED' ? 'var(--success)' : scanStatus === 'BARCODE FOUND' ? 'var(--gold)' : 'var(--muted)',
+              textAlign: 'center',
+            }}>
+              {loading ? 'LOOKING UP COMIC...' : scanStatus}
+            </p>
+
+            {scanError && (
+              <p style={{
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: '0.6rem',
+                color: 'var(--red)',
+                letterSpacing: '0.08em',
+                textAlign: 'center',
+              }}>
+                {scanError}
+              </p>
+            )}
+
+            {/* Start / Stop button */}
+            {!loading && (
+              <button
+                onClick={scannerActive ? stopScanner : startScanner}
+                style={{
+                  background: scannerActive ? 'var(--red)' : 'var(--gold)',
+                  color: 'var(--ink)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '0.75rem',
+                  fontFamily: 'Syne, sans-serif',
+                  fontWeight: 700,
+                  fontSize: '0.9rem',
+                  letterSpacing: '0.05em',
+                  cursor: 'pointer',
+                }}
+              >
+                {scannerActive ? 'STOP SCANNER' : 'START SCANNER'}
+              </button>
+            )}
+
+            {/* Divider */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ flex: 1, height: '1px', background: '#333' }} />
+              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)' }}>OR ENTER BARCODE</span>
+              <div style={{ flex: 1, height: '1px', background: '#333' }} />
+            </div>
+
+            {/* Manual barcode entry fallback */}
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input
+                style={{ ...inputStyle, flex: 1 }}
+                value={scannedBarcode}
+                onChange={e => setScannedBarcode(e.target.value)}
+                placeholder="759606058076"
+                inputMode="numeric"
+              />
+              <button
+                onClick={() => handleManualBarcode(scannedBarcode)}
+                disabled={loading || !scannedBarcode.trim()}
+                style={{
+                  background: 'var(--gold)',
+                  color: 'var(--ink)',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '0 1.25rem',
+                  fontFamily: 'Syne, sans-serif',
+                  fontWeight: 700,
+                  fontSize: '0.8rem',
+                  letterSpacing: '0.05em',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  opacity: loading ? 0.6 : 1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                LOOK UP
+              </button>
+            </div>
+
+          </div>
+        )}
+
+        {/* ── VOICE TAB ── */}
         {tab === 'voice' && !isEditing && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem', padding: '2rem 0' }}>
             <p style={{ color: 'var(--muted)', fontSize: '0.85rem', lineHeight: 1.6, textAlign: 'center' }}>
@@ -431,6 +753,7 @@ export default function AddComic() {
           </div>
         )}
 
+        {/* ── AI TAB ── */}
         {tab === 'ai' && !isEditing && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             {imagePreview && (
@@ -543,6 +866,7 @@ export default function AddComic() {
           </div>
         )}
 
+        {/* ── MANUAL TAB ── */}
         {(tab === 'manual' || isEditing) && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
 
