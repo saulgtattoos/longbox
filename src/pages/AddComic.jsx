@@ -1,4 +1,7 @@
+import CameraScanner from '../components/CameraScanner'
 import { useState, useRef, useEffect } from 'react'
+import BarcodeScanner from '../components/BarcodeScanner'
+import { parseComicBarcode, fetchComicData, mapToFormState } from '../utils/barcode'
 import { useLocation, useNavigate } from 'react-router-dom'
 import AppShell from '../components/layout/AppShell'
 import { supabase } from '../services/supabaseClient'
@@ -125,6 +128,15 @@ export default function AddComic() {
       if (isEditing) navigate('/inventory')
     }, 1500)
   }
+async function handleBarcodeScan(rawCode) {
+  const parsed = parseComicBarcode(rawCode)
+  if (parsed.error) return
+  setLoading(true)
+  const comicData = await fetchComicData(parsed)
+  if (comicData) setForm(prev => ({ ...prev, ...mapToFormState(comicData) }))
+  setLoading(false)
+  setTab('manual')
+}
 
   async function handleAiAssist() {
     if (!aiInput.trim()) return
@@ -608,6 +620,12 @@ Fields: title, issue, publisher, year, condition, variant (true/false), purchase
         )}
 
         {/* ── VOICE TAB ── */}
+{tab === 'scan' && !isEditing && (
+  <CameraScanner
+    onScanComplete={(formData) => setForm(prev => ({ ...prev, ...formData }))}
+    onClose={() => setTab('manual')}
+  />
+)}
         {tab === 'voice' && !isEditing && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem', padding: '2rem 0' }}>
             <p style={{ color: 'var(--muted)', fontSize: '0.85rem', lineHeight: 1.6, textAlign: 'center' }}>
