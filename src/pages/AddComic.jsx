@@ -1,11 +1,9 @@
-import CameraScanner from '../components/CameraScanner'
 import { useState, useRef, useEffect } from 'react'
-import BarcodeScanner from '../components/BarcodeScanner'
-import { parseComicBarcode, fetchComicData, mapToFormState } from '../utils/barcode'
 import { useLocation, useNavigate } from 'react-router-dom'
 import AppShell from '../components/layout/AppShell'
 import { supabase } from '../services/supabaseClient'
-import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library'
+import CameraScanner from '../components/CameraScanner'
+import { parseComicBarcode, fetchComicData, mapToFormState } from '../utils/barcode'
 
 const emptyForm = {
   title: '',
@@ -67,7 +65,6 @@ export default function AddComic() {
     estimatedValue: editComic.estimatedValue || editComic.estimated_value || '',
     notes: editComic.notes || '',
   } : emptyForm)
-
   const [aiInput, setAiInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -76,25 +73,10 @@ export default function AddComic() {
   const [imageFile, setImageFile] = useState(null)
   const [listening, setListening] = useState(false)
   const [voiceStatus, setVoiceStatus] = useState('')
-
-  const [scannerActive, setScannerActive] = useState(false)
-  const [scanStatus, setScanStatus] = useState('POINT AT BARCODE')
-  const [scannedBarcode, setScannedBarcode] = useState('')
-  const [scanError, setScanError] = useState('')
-  const [barcodeListening, setBarcodeListening] = useState(false)
-
+  const [frontCoverUrl, setFrontCoverUrl] = useState(null)
+  const [backCoverUrl, setBackCoverUrl] = useState(null)
   const fileInputRef = useRef(null)
   const recognitionRef = useRef(null)
-  const videoRef = useRef(null)
-  const codeReaderRef = useRef(null)
-
-  useEffect(() => {
-    if (tab !== 'scan') stopScanner()
-  }, [tab])
-
-  useEffect(() => {
-    return () => stopScanner()
-  }, [])
 
   function handleChange(field, value) {
     setForm(prev => ({ ...prev, [field]: value }))
@@ -112,31 +94,28 @@ export default function AddComic() {
       purchase_price: form.purchasePrice,
       estimated_value: form.estimatedValue,
       notes: form.notes,
+      cover_front_url: frontCoverUrl,
+      cover_back_url: backCoverUrl,
     }
+
     if (isEditing) {
       await supabase.from('comics').update(record).eq('id', editComic.id)
     } else {
       await supabase.from('comics').insert(record)
     }
+
     setSaved(true)
     setForm(emptyForm)
     setImagePreview(null)
     setImageBase64(null)
     setImageFile(null)
+    setFrontCoverUrl(null)
+    setBackCoverUrl(null)
     setTimeout(() => {
       setSaved(false)
       if (isEditing) navigate('/inventory')
     }, 1500)
   }
-async function handleBarcodeScan(rawCode) {
-  const parsed = parseComicBarcode(rawCode)
-  if (parsed.error) return
-  setLoading(true)
-  const comicData = await fetchComicData(parsed)
-  if (comicData) setForm(prev => ({ ...prev, ...mapToFormState(comicData) }))
-  setLoading(false)
-  setTab('manual')
-}
 
   async function handleAiAssist() {
     if (!aiInput.trim()) return
@@ -223,8 +202,14 @@ async function handleBarcodeScan(rawCode) {
           messages: [{
             role: 'user',
             content: [
-              { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
-              { type: 'text', text: 'This is a comic book cover. Extract all visible details and return ONLY a JSON object with these exact fields: title, issue, publisher, year, condition, variant (true/false), purchasePrice, estimatedValue, notes. Estimate condition from visible wear. Leave unknown fields as empty string.' }
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: mediaType, data: imageBase64 }
+              },
+              {
+                type: 'text',
+                text: 'This is a comic book cover. Extract all visible details and return ONLY a JSON object with these exact fields: title, issue, publisher, year, condition, variant (true/false), purchasePrice, estimatedValue, notes. Estimate condition from visible wear. Leave unknown fields as empty string.'
+              }
             ]
           }]
         })
@@ -241,118 +226,14 @@ async function handleBarcodeScan(rawCode) {
     setLoading(false)
   }
 
-  // ── ZXING SCANNER ─────────────────────────────────────────────
-
-  async function startScanner() {
-    setScanError('')
-    setScanStatus('STARTING CAMERA...')
-    setScannerActive(true)
-    try {
-      const codeReader = new BrowserMultiFormatReader()
-      codeReaderRef.current = codeReader
-
-      setScanStatus('POINT AT BARCODE')
-
-      // Use environment-facing camera via constraints, no device enumeration needed
-      await codeReader.decodeFromConstraints(
-        { video: { facingMode: 'environment' } },
-        videoRef.current,
-        (result, err) => {
-          if (result) {
-            handleBarcodeDetected(result.getText())
-          }
-          if (err && !(err instanceof NotFoundException)) {
-            console.error('ZXing error:', err)
-          }
-        }
-      )
-    } catch (err) {
-      console.error('Camera start error:', err)
-      setScanError('Camera access denied. Allow camera and try again.')
-      setScannerActive(false)
-      setScanStatus('POINT AT BARCODE')
-    }
-  }
-
-  function stopScanner() {
-    if (codeReaderRef.current) {
-      codeReaderRef.current.reset()
-      codeReaderRef.current = null
-    }
-    setScannerActive(false)
-  }
-
-  async function handleBarcodeDetected(barcode) {
-    stopScanner()
-    setScannedBarcode(barcode)
-    setScanStatus('BARCODE FOUND')
-    setScanError('')
+  async function handleBarcodeScan(rawCode) {
+    const parsed = parseComicBarcode(rawCode)
+    if (parsed.error) return
     setLoading(true)
-
-    try {
-      // Try Google Books first (works well for trades, hardcovers, ISBN barcodes)
-      let bookContext = ''
-      try {
-        const gbRes = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${barcode}`)
-        const gbData = await gbRes.json()
-        if (gbData.totalItems > 0) {
-          const b = gbData.items[0].volumeInfo
-          bookContext = `Google Books match: Title: "${b.title}", Authors: ${b.authors?.join(', ')}, Publisher: "${b.publisher}", Published: "${b.publishedDate}", Description: "${b.description?.slice(0, 400)}"`
-        }
-      } catch (e) {
-        // Google Books failed, continue with barcode only
-      }
-
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': import.meta.env.VITE_ANTHROPIC_KEY,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          messages: [{
-            role: 'user',
-            content: `You are a comic book expert. A barcode was scanned from a comic book or graphic novel. Barcode: ${barcode}. ${bookContext ? bookContext : `No Google Books match. Use your knowledge of comic UPC structures to identify it. Common prefixes: Marvel = 759606, DC = 761941, Image = 70985, Dark Horse = 761568, IDW = 827714.`}
-
-Return ONLY raw JSON. No explanation, no preamble, no markdown, no backticks. Start your response with { and end with }.
-
-Fields: title, issue, publisher, year, condition, variant (true/false), purchasePrice, estimatedValue, notes.
-- title: full series name
-- issue: issue number, or empty string for trades and hardcovers
-- condition: "9.2"
-- purchasePrice: ""
-- estimatedValue: number only, no dollar sign
-- notes: first appearances, collected editions, significance
-- variant: false unless clearly a variant`
-          }]
-        })
-      })
-
-      const data = await response.json()
-      const text = data.content[0].text
-      const jsonMatch = text.match(/\{[\s\S]*\}/)
-      if (!jsonMatch) throw new Error('No JSON in response')
-      const parsed = JSON.parse(jsonMatch[0])
-      setForm(prev => ({ ...prev, ...parsed }))
-      setScanStatus('FIELDS FILLED')
-      setTimeout(() => setTab('manual'), 800)
-    } catch (err) {
-      console.error('Barcode lookup error:', err)
-      setScanError('Lookup failed. Enter details manually.')
-      setScanStatus('TRY AGAIN')
-    }
+    const comicData = await fetchComicData(parsed)
+    if (comicData) setForm(prev => ({ ...prev, ...mapToFormState(comicData) }))
     setLoading(false)
-  }
-
-  async function handleManualBarcode() {
-    if (!scannedBarcode.trim()) return
-    setLoading(true)
-    setScanStatus('LOOKING UP...')
-    await handleBarcodeDetected(scannedBarcode.trim())
+    setTab('manual')
   }
 
   function startListening() {
@@ -421,19 +302,29 @@ Fields: title, issue, publisher, year, condition, variant (true/false), purchase
       <button
         onClick={listening ? stopListening : startListening}
         style={{
-          width: '80px', height: '80px', borderRadius: '50%',
+          width: '80px',
+          height: '80px',
+          borderRadius: '50%',
           border: `3px solid ${listening ? 'var(--red)' : 'var(--gold)'}`,
           background: listening ? 'var(--red)' : 'var(--surface2)',
           color: listening ? 'white' : 'var(--gold)',
-          fontSize: '2rem', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '2rem',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
           transition: 'all 0.2s',
           boxShadow: listening ? '0 0 30px rgba(192,57,43,0.4)' : '0 0 20px rgba(201,169,110,0.2)',
         }}
       >
         {listening ? '⏹' : '🎙'}
       </button>
-      <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.65rem', color: listening ? 'var(--gold)' : 'var(--muted)', letterSpacing: '0.1em' }}>
+      <p style={{
+        fontFamily: 'JetBrains Mono, monospace',
+        fontSize: '0.65rem',
+        color: listening ? 'var(--gold)' : 'var(--muted)',
+        letterSpacing: '0.1em',
+      }}>
         {listening ? 'LISTENING...' : voiceStatus === 'READING...' ? 'READING...' : voiceStatus === 'DONE' ? 'FIELDS FILLED' : 'TAP TO SPEAK'}
       </p>
     </div>
@@ -443,21 +334,51 @@ Fields: title, issue, publisher, year, condition, variant (true/false), purchase
 
   return (
     <AppShell>
+      {tab === 'scan' && !isEditing && (
+        <CameraScanner
+          onScanComplete={(formData, frontUrl, backUrl) => {
+            setForm(prev => ({ ...prev, ...formData }))
+            if (frontUrl) setFrontCoverUrl(frontUrl)
+            if (backUrl) setBackCoverUrl(backUrl)
+            setTab('manual')
+          }}
+          onClose={() => setTab('manual')}
+        />
+      )}
+
       <div style={{ padding: '1.5rem', maxWidth: '600px', margin: '0 auto' }}>
 
-        <h2 style={{ fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '1.4rem', color: 'var(--gold)', marginBottom: '1.5rem', letterSpacing: '0.05em' }}>
+        <h2 style={{
+          fontFamily: 'Syne, sans-serif',
+          fontWeight: 800,
+          fontSize: '1.4rem',
+          color: 'var(--gold)',
+          marginBottom: '1.5rem',
+          letterSpacing: '0.05em',
+        }}>
           {isEditing ? 'EDIT COMIC' : 'ADD COMIC'}
         </h2>
 
         {!isEditing && (
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '1px solid #333', paddingBottom: '0.75rem', flexWrap: 'wrap' }}>
+          <div style={{
+            display: 'flex',
+            gap: '0.5rem',
+            marginBottom: '1.5rem',
+            borderBottom: '1px solid #333',
+            paddingBottom: '0.75rem',
+          }}>
             {tabs.map(t => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
                 style={{
-                  fontFamily: 'JetBrains Mono, monospace', fontSize: '0.7rem', letterSpacing: '0.1em',
-                  padding: '0.4rem 1rem', borderRadius: '4px', border: 'none', cursor: 'pointer',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: '0.7rem',
+                  letterSpacing: '0.1em',
+                  padding: '0.4rem 1rem',
+                  borderRadius: '4px',
+                  border: 'none',
+                  cursor: 'pointer',
                   background: tab === t ? 'var(--gold)' : 'var(--surface2)',
                   color: tab === t ? 'var(--ink)' : 'var(--muted)',
                   fontWeight: tab === t ? 700 : 400,
@@ -469,163 +390,25 @@ Fields: title, issue, publisher, year, condition, variant (true/false), purchase
           </div>
         )}
 
-        {/* ── SCAN TAB ── */}
-        {tab === 'scan' && !isEditing && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <p style={{ color: 'var(--muted)', fontSize: '0.85rem', lineHeight: 1.6 }}>
-              Point your camera at the barcode on the back of the comic. Claude will look it up and fill the fields.
-            </p>
-
-            <div style={{
-              position: 'relative', width: '100%', aspectRatio: '4/3',
-              background: '#000', borderRadius: '8px', overflow: 'hidden',
-              border: `2px solid ${scannerActive ? 'var(--gold)' : '#333'}`,
-            }}>
-              <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-
-              {scannerActive && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-                  <div style={{ position: 'relative', width: '65%', height: '28%', border: '2px solid var(--gold)', borderRadius: '4px', boxShadow: '0 0 0 2000px rgba(0,0,0,0.4)', overflow: 'hidden' }}>
-                    {/* Animated scan line */}
-                    <div style={{
-                      position: 'absolute',
-                      left: 0,
-                      right: 0,
-                      height: '2px',
-                      background: 'linear-gradient(90deg, transparent, var(--gold), transparent)',
-                      boxShadow: '0 0 8px var(--gold)',
-                      animation: 'scanline 1.4s ease-in-out infinite',
-                    }} />
-                    <style>{`
-                      @keyframes scanline {
-                        0% { top: 0%; }
-                        50% { top: calc(100% - 2px); }
-                        100% { top: 0%; }
-                      }
-                    `}</style>
-                    {/* Corner accents */}
-                    <div style={{ position: 'absolute', top: -2, left: -2, width: 12, height: 12, borderTop: '3px solid var(--gold)', borderLeft: '3px solid var(--gold)' }} />
-                    <div style={{ position: 'absolute', top: -2, right: -2, width: 12, height: 12, borderTop: '3px solid var(--gold)', borderRight: '3px solid var(--gold)' }} />
-                    <div style={{ position: 'absolute', bottom: -2, left: -2, width: 12, height: 12, borderBottom: '3px solid var(--gold)', borderLeft: '3px solid var(--gold)' }} />
-                    <div style={{ position: 'absolute', bottom: -2, right: -2, width: 12, height: 12, borderBottom: '3px solid var(--gold)', borderRight: '3px solid var(--gold)' }} />
-                  </div>
-                </div>
-              )}
-
-              {!scannerActive && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.75rem' }}>
-                  <span style={{ fontSize: '3rem', opacity: 0.4 }}>▦</span>
-                  <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.65rem', color: 'var(--muted)', letterSpacing: '0.1em' }}>CAMERA OFF</p>
-                </div>
-              )}
-            </div>
-
-            <p style={{
-              fontFamily: 'JetBrains Mono, monospace', fontSize: '0.65rem', letterSpacing: '0.1em', textAlign: 'center',
-              color: loading ? 'var(--gold)' : scanStatus === 'FIELDS FILLED' ? 'var(--success)' : scanStatus === 'BARCODE FOUND' ? 'var(--gold)' : 'var(--muted)',
-            }}>
-              {loading ? 'LOOKING UP COMIC...' : scanStatus}
-            </p>
-
-            {scanError && (
-              <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--red)', letterSpacing: '0.08em', textAlign: 'center' }}>
-                {scanError}
-              </p>
+        {/* Cover thumbnails from scan */}
+        {(frontCoverUrl || backCoverUrl) && (
+          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            {frontCoverUrl && (
+              <div style={{ flex: 1 }}>
+                <p style={{ ...labelStyle, marginBottom: '0.4rem' }}>FRONT COVER</p>
+                <img src={frontCoverUrl} alt="Front cover" style={{ width: '100%', borderRadius: '6px', border: '1px solid var(--gold)', objectFit: 'cover', maxHeight: '180px' }} />
+              </div>
             )}
-
-            {!loading && (
-              <button
-                onClick={scannerActive ? stopScanner : startScanner}
-                style={{
-                  background: scannerActive ? 'var(--red)' : 'var(--gold)', color: 'var(--ink)',
-                  border: 'none', borderRadius: '6px', padding: '0.75rem',
-                  fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.9rem',
-                  letterSpacing: '0.05em', cursor: 'pointer',
-                }}
-              >
-                {scannerActive ? 'STOP SCANNER' : 'START SCANNER'}
-              </button>
+            {backCoverUrl && (
+              <div style={{ flex: 1 }}>
+                <p style={{ ...labelStyle, marginBottom: '0.4rem' }}>BACK COVER</p>
+                <img src={backCoverUrl} alt="Back cover" style={{ width: '100%', borderRadius: '6px', border: '1px solid #333', objectFit: 'cover', maxHeight: '180px' }} />
+              </div>
             )}
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <div style={{ flex: 1, height: '1px', background: '#333' }} />
-              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)' }}>OR ENTER BARCODE</span>
-              <div style={{ flex: 1, height: '1px', background: '#333' }} />
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <input
-                style={{ ...inputStyle, flex: 1 }}
-                value={scannedBarcode}
-                onChange={e => setScannedBarcode(e.target.value)}
-                placeholder="759606058076"
-                inputMode="numeric"
-              />
-              <button
-                onClick={() => {
-                  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-                    alert('Voice input not supported. Try Chrome.')
-                    return
-                  }
-                  const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-                  const r = new SR()
-                  r.continuous = false
-                  r.interimResults = false
-                  r.lang = 'en-US'
-                  r.onstart = () => setBarcodeListening(true)
-                  r.onend = () => setBarcodeListening(false)
-                  r.onerror = () => setBarcodeListening(false)
-                  r.onresult = (e) => {
-                    setScannedBarcode(e.results[0][0].transcript.replace(/\s/g, ''))
-                    setBarcodeListening(false)
-                  }
-                  r.start()
-                }}
-                style={{
-                  position: 'relative',
-                  background: barcodeListening ? 'var(--red)' : 'var(--surface2)',
-                  color: barcodeListening ? 'white' : 'var(--gold)',
-                  border: `1px solid ${barcodeListening ? 'var(--red)' : 'var(--gold)'}`,
-                  borderRadius: '6px',
-                  padding: '0 0.75rem',
-                  fontSize: '1.1rem',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  boxShadow: barcodeListening ? '0 0 0 4px rgba(192,57,43,0.25)' : 'none',
-                  animation: barcodeListening ? 'micPulse 1s ease-in-out infinite' : 'none',
-                }}
-              >
-                {barcodeListening ? '⏹' : '🎙'}
-                <style>{`
-                  @keyframes micPulse {
-                    0%, 100% { box-shadow: 0 0 0 2px rgba(192,57,43,0.4); }
-                    50% { box-shadow: 0 0 0 8px rgba(192,57,43,0.1); }
-                  }
-                `}</style>
-              </button>
-              <button
-                onClick={handleManualBarcode}
-                disabled={loading || !scannedBarcode.trim()}
-                style={{
-                  background: 'var(--gold)', color: 'var(--ink)', border: 'none', borderRadius: '6px',
-                  padding: '0 1.25rem', fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: '0.8rem',
-                  letterSpacing: '0.05em', cursor: loading ? 'not-allowed' : 'pointer',
-                  opacity: loading ? 0.6 : 1, whiteSpace: 'nowrap',
-                }}
-              >
-                LOOK UP
-              </button>
-            </div>
           </div>
         )}
 
-        {/* ── VOICE TAB ── */}
-{tab === 'scan' && !isEditing && (
-  <CameraScanner
-    onScanComplete={(formData) => setForm(prev => ({ ...prev, ...formData }))}
-    onClose={() => setTab('manual')}
-  />
-)}
+        {/* VOICE TAB */}
         {tab === 'voice' && !isEditing && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem', padding: '2rem 0' }}>
             <p style={{ color: 'var(--muted)', fontSize: '0.85rem', lineHeight: 1.6, textAlign: 'center' }}>
@@ -634,11 +417,18 @@ Fields: title, issue, publisher, year, condition, variant (true/false), purchase
             <button
               onClick={listening ? stopListening : startListening}
               style={{
-                width: '100px', height: '100px', borderRadius: '50%',
+                width: '100px',
+                height: '100px',
+                borderRadius: '50%',
                 border: `3px solid ${listening ? 'var(--red)' : 'var(--gold)'}`,
                 background: listening ? 'var(--red)' : 'var(--surface2)',
-                color: listening ? 'white' : 'var(--gold)', fontSize: '2.5rem', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s',
+                color: listening ? 'white' : 'var(--gold)',
+                fontSize: '2.5rem',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.2s',
                 boxShadow: listening ? '0 0 30px rgba(192,57,43,0.4)' : '0 0 20px rgba(201,169,110,0.2)',
               }}
             >
@@ -661,7 +451,7 @@ Fields: title, issue, publisher, year, condition, variant (true/false), purchase
           </div>
         )}
 
-        {/* ── AI TAB ── */}
+        {/* AI ASSIST TAB */}
         {tab === 'ai' && !isEditing && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             {imagePreview && (
@@ -692,7 +482,7 @@ Fields: title, issue, publisher, year, condition, variant (true/false), purchase
           </div>
         )}
 
-        {/* ── MANUAL TAB ── */}
+        {/* MANUAL TAB */}
         {(tab === 'manual' || isEditing) && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
 
