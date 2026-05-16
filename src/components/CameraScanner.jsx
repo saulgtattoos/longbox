@@ -1,30 +1,44 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../services/supabaseClient'
 
-/**
- * CameraScanner.jsx
- * Multi-photo scanner with Claude Vision.
- * User takes multiple photos, taps READ, Claude processes all at once.
- * Determines front vs back cover and uploads both to Supabase Storage.
- *
- * Props:
- *   onScanComplete(formData, frontUrl, backUrl) — called with parsed data + image URLs
- *   onClose() — called when user dismisses
- */
 export default function CameraScanner({ onScanComplete, onClose }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
   const [photos, setPhotos] = useState([])
   const [status, setStatus] = useState('idle')
-  const [statusText, setStatusText] = useState('SHOOT THE COVER AND BACK')
+  const [statusText, setStatusText] = useState('FRAME THE COVER AND SHOOT')
   const [flash, setFlash] = useState(false)
   const [facingMode, setFacingMode] = useState('environment')
+
+  const readingMessages = [
+    'EXTRACTING DETAILS...',
+    'READING COVER DATA...',
+    'IDENTIFYING SERIES...',
+    'WRITING TO VAULT...',
+    'ALMOST DONE...',
+  ]
+  const [messageIndex, setMessageIndex] = useState(0)
+  const messageTimerRef = useRef(null)
 
   useEffect(() => {
     startCamera()
     return () => stopCamera()
   }, [facingMode])
+
+  function startReadingMessages() {
+    setMessageIndex(0)
+    messageTimerRef.current = setInterval(() => {
+      setMessageIndex(prev => (prev + 1) % readingMessages.length)
+    }, 1200)
+  }
+
+  function stopReadingMessages() {
+    if (messageTimerRef.current) {
+      clearInterval(messageTimerRef.current)
+      messageTimerRef.current = null
+    }
+  }
 
   async function startCamera() {
     stopCamera()
@@ -91,7 +105,7 @@ export default function CameraScanner({ onScanComplete, onClose }) {
   async function handleRead() {
     if (photos.length === 0 || status === 'reading') return
     setStatus('reading')
-    setStatusText('CLAUDE IS READING...')
+    startReadingMessages()
 
     try {
       const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_KEY
@@ -126,8 +140,6 @@ export default function CameraScanner({ onScanComplete, onClose }) {
       const cleaned = text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(cleaned)
 
-      setStatusText('UPLOADING PHOTOS...')
-
       const timestamp = Date.now()
       const frontIndex = parsed.frontPhotoIndex ?? 0
       const backIndex = parsed.backPhotoIndex ?? -1
@@ -149,6 +161,7 @@ export default function CameraScanner({ onScanComplete, onClose }) {
         notes: parsed.notes || '',
       }
 
+      stopReadingMessages()
       setStatus('done')
       setStatusText('DONE')
       stopCamera()
@@ -156,9 +169,10 @@ export default function CameraScanner({ onScanComplete, onClose }) {
 
     } catch (err) {
       console.error('[CameraScanner] Read failed:', err)
+      stopReadingMessages()
       setStatus('error')
       setStatusText('READ FAILED — TRY AGAIN')
-      setTimeout(() => { setStatus('idle'); setStatusText('SHOOT THE COVER AND BACK') }, 2000)
+      setTimeout(() => { setStatus('idle'); setStatusText('FRAME THE COVER AND SHOOT') }, 2000)
     }
   }
 
@@ -181,7 +195,7 @@ export default function CameraScanner({ onScanComplete, onClose }) {
         <button onClick={flipCamera} style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(201,169,110,0.4)', borderRadius: '6px', color: 'var(--gold)', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.7rem', letterSpacing: '0.1em', padding: '0.5rem 1rem', cursor: 'pointer' }}>FLIP</button>
       </div>
 
-      {/* Frame guides */}
+      {/* Frame guides with pulsing gold ring when reading */}
       <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 5 }}>
         <div style={{ width: '75%', aspectRatio: '2/3', position: 'relative', maxHeight: '65vh' }}>
           {[
@@ -190,9 +204,17 @@ export default function CameraScanner({ onScanComplete, onClose }) {
             { bottom: 0, left: 0, borderBottom: '3px solid', borderLeft: '3px solid' },
             { bottom: 0, right: 0, borderBottom: '3px solid', borderRight: '3px solid' },
           ].map((style, i) => (
-            <div key={i} style={{ position: 'absolute', width: '28px', height: '28px', borderColor: isDone ? 'var(--success)' : 'rgba(201,169,110,0.7)', transition: 'border-color 0.3s', ...style }} />
+            <div key={i} style={{
+              position: 'absolute',
+              width: '32px',
+              height: '32px',
+              borderColor: isDone ? 'var(--success)' : isReading ? 'var(--gold)' : 'rgba(201,169,110,0.6)',
+              animation: isReading ? 'cornerPulse 1.2s ease-in-out infinite' : 'none',
+              animationDelay: i * 0.15 + 's',
+              transition: 'border-color 0.3s',
+              ...style,
+            }} />
           ))}
-          {isReading && <div style={{ position: 'absolute', left: '5%', right: '5%', height: '2px', background: 'linear-gradient(90deg, transparent, var(--gold), transparent)', animation: 'scanline 1.5s ease-in-out infinite' }} />}
         </div>
       </div>
 
@@ -201,7 +223,7 @@ export default function CameraScanner({ onScanComplete, onClose }) {
 
         {/* Thumbnails */}
         {photos.length > 0 && (
-          <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', width: '100%', paddingBottom: '0.25rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', width: '100%', paddingBottom: '0.25rem', justifyContent: 'center' }}>
             {photos.map((photo, i) => (
               <div key={i} style={{ position: 'relative', flexShrink: 0 }}>
                 <img src={photo.preview} alt={"Photo " + (i + 1)} style={{ width: '56px', height: '72px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--gold)' }} />
@@ -213,28 +235,51 @@ export default function CameraScanner({ onScanComplete, onClose }) {
         )}
 
         {/* Status */}
-        <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.65rem', letterSpacing: '0.15em', color: isDone ? 'var(--success)' : isError ? 'var(--red)' : 'var(--gold)', transition: 'color 0.3s' }}>{statusText}</p>
+        <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.65rem', letterSpacing: '0.15em', color: isDone ? 'var(--success)' : isError ? 'var(--red)' : 'var(--gold)', transition: 'color 0.3s', textAlign: 'center', minHeight: '1rem' }}>
+          {isReading ? readingMessages[messageIndex] : statusText}
+        </p>
 
-        {/* Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
-          <button onClick={capturePhoto} disabled={isReading || isDone || photos.length >= 6} style={{ width: '72px', height: '72px', borderRadius: '50%', border: '3px solid var(--gold)', background: 'rgba(201,169,110,0.15)', cursor: isReading || isDone || photos.length >= 6 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)', opacity: photos.length >= 6 ? 0.4 : 1 }}>
-            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--gold)' }} />
+        {/* Controls — always centered */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', gap: '2rem' }}>
+
+          {/* Spacer to keep capture button centered when READ button appears */}
+          <div style={{ width: photos.length > 0 ? '90px' : '0px', transition: 'width 0.2s' }} />
+
+          {/* Capture button — always in center */}
+          <button
+            onClick={capturePhoto}
+            disabled={isReading || isDone || photos.length >= 6}
+            style={{ width: '72px', height: '72px', borderRadius: '50%', border: '3px solid var(--gold)', background: 'rgba(201,169,110,0.15)', cursor: isReading || isDone || photos.length >= 6 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)', opacity: photos.length >= 6 ? 0.4 : 1, flexShrink: 0 }}
+          >
+            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: isReading || isDone ? 'rgba(201,169,110,0.3)' : 'var(--gold)' }} />
           </button>
 
-          {photos.length > 0 && (
-            <button onClick={handleRead} disabled={!canRead} style={{ background: canRead ? 'var(--gold)' : 'rgba(201,169,110,0.3)', color: 'var(--ink)', border: 'none', borderRadius: '8px', padding: '0.75rem 1.5rem', fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '0.9rem', letterSpacing: '0.05em', cursor: canRead ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              {isReading ? (
-                <><div style={{ width: '14px', height: '14px', border: '2px solid var(--ink)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />READING</>
-              ) : "READ " + photos.length + " PHOTO" + (photos.length > 1 ? 'S' : '')}
-            </button>
-          )}
+          {/* READ button — appears to the right when photos exist */}
+          <div style={{ width: '90px' }}>
+            {photos.length > 0 && (
+              <button
+                onClick={handleRead}
+                disabled={!canRead}
+                style={{ background: canRead ? 'var(--gold)' : 'rgba(201,169,110,0.3)', color: 'var(--ink)', border: 'none', borderRadius: '8px', padding: '0.6rem 0.75rem', fontFamily: 'Syne, sans-serif', fontWeight: 800, fontSize: '0.75rem', letterSpacing: '0.05em', cursor: canRead ? 'pointer' : 'not-allowed', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
+              >
+                {isReading ? (
+                  <div style={{ width: '12px', height: '12px', border: '2px solid var(--ink)', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                ) : "READ " + photos.length}
+              </button>
+            )}
+          </div>
         </div>
 
-        <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.55rem', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em' }}>UP TO 6 PHOTOS</p>
+        <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.55rem', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em' }}>
+          {photos.length === 0 ? 'TAP TO SHOOT' : photos.length + ' OF 6 PHOTOS'}
+        </p>
       </div>
 
       <style>{`
-        @keyframes scanline { 0% { top: 10%; } 50% { top: 85%; } 100% { top: 10%; } }
+        @keyframes cornerPulse {
+          0%, 100% { opacity: 1; border-color: rgba(201,169,110,0.9); }
+          50% { opacity: 0.3; border-color: rgba(201,169,110,0.2); }
+        }
         @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
