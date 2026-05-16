@@ -243,7 +243,7 @@ export default function Inventory() {
                     color: 'var(--text)',
                     marginBottom: '0.25rem',
                   }}>
-                    {comic.title} {comic.issue && `#${comic.issue}`}
+                  {comic.title} {comic.issue && `${comic.issue.replace(/^#+/, '#')}`}
                   </p>
                   <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                     {comic.publisher && (
@@ -359,7 +359,7 @@ export default function Inventory() {
           tools: [{ type: 'web_search_20250305', name: 'web_search' }],
           messages: [{
             role: 'user',
-            content: `Search eBay sold listings and comic price guides for the current market value of: ${comic.title} #${comic.issue} ${comic.publisher} ${comic.year} in condition ${comic.condition}. Return a single sentence with the estimated current market value range based on recent sales.`
+content: `Search eBay sold listings for: ${comic.title} ${comic.issue} ${comic.publisher} ${comic.year} CGC ${comic.condition}. Reply in ONE sentence only with the estimated market value range based on recent sales. Example format: Recent sales range from $X to $Y with an average of $Z.`
           }]
         })
       })
