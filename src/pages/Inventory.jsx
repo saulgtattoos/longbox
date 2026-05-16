@@ -8,6 +8,7 @@ export default function Inventory() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [valueLookup, setValueLookup] = useState({})
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -339,6 +340,63 @@ export default function Inventory() {
                   >
                     DELETE
                   </button>
+                  <button
+  onClick={async (e) => {
+    e.stopPropagation()
+    setValueLookup(prev => ({ ...prev, [comic.id]: 'loading' }))
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 500,
+          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+          messages: [{
+            role: 'user',
+            content: `Search eBay sold listings and comic price guides for the current market value of: ${comic.title} #${comic.issue} ${comic.publisher} ${comic.year} in condition ${comic.condition}. Return a single sentence with the estimated current market value range based on recent sales.`
+          }]
+        })
+      })
+      const data = await response.json()
+      const text = data.content.filter(b => b.type === 'text').map(b => b.text).join(' ')
+      setValueLookup(prev => ({ ...prev, [comic.id]: text || 'No data found' }))
+    } catch (err) {
+      setValueLookup(prev => ({ ...prev, [comic.id]: 'Lookup failed' }))
+    }
+  }}
+  style={{
+    width: '100%',
+    background: 'var(--surface)',
+    color: 'var(--gold)',
+    border: '1px solid var(--gold)',
+    borderRadius: '6px',
+    padding: '0.6rem',
+    fontFamily: 'Syne, sans-serif',
+    fontWeight: 700,
+    fontSize: '0.8rem',
+    cursor: 'pointer',
+  }}
+>
+  {valueLookup[comic.id] === 'loading' ? 'SEARCHING...' : 'GET CURRENT VALUE'}
+</button>
+{valueLookup[comic.id] && valueLookup[comic.id] !== 'loading' && (
+  <div style={{
+    width: '100%',
+    background: 'var(--surface2)',
+    border: '1px solid #333',
+    borderRadius: '6px',
+    padding: '0.75rem',
+  }}>
+    <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.6rem', color: 'var(--muted)', marginBottom: '0.35rem', letterSpacing: '0.1em' }}>CURRENT MARKET VALUE</p>
+    <p style={{ fontFamily: 'Inter, sans-serif', fontSize: '0.8rem', color: 'var(--success)', lineHeight: 1.5 }}>{valueLookup[comic.id]}</p>
+  </div>
+)}
                 </div>
               )}
             </div>
